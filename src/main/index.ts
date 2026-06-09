@@ -19,21 +19,34 @@ const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
 // ============ File Logging ============
 const logDir = path.join(app.getPath('userData'), 'logs')
 const logFile = path.join(logDir, `typeness-${new Date().toISOString().slice(0, 10)}.log`)
+let fileLogStream: fs.WriteStream | null = null
 try {
   if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true })
-  const logStream = fs.createWriteStream(logFile, { flags: 'a' })
-  const origLog = console.log, origWarn = console.warn, origError = console.error
-  function writeLog(level: string, args: any[]) {
+  fileLogStream = fs.createWriteStream(logFile, { flags: 'a' })
+  const _origLog = console.log
+  const _origWarn = console.warn
+  const _origError = console.error
+  console.log = function patchedLog(...args: any[]) {
+    _origLog.apply(console, args)
+    _writeFileLog('INFO', args)
+  }
+  console.warn = function patchedWarn(...args: any[]) {
+    _origWarn.apply(console, args)
+    _writeFileLog('WARN', args)
+  }
+  console.error = function patchedError(...args: any[]) {
+    _origError.apply(console, args)
+    _writeFileLog('ERROR', args)
+  }
+  function _writeFileLog(level: string, args: any[]) {
+    if (!fileLogStream) return
     const ts = new Date().toISOString()
     const msg = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')
-    logStream.write(`[${ts}] [${level}] ${msg}\n`)
+    fileLogStream.write(`[${ts}] [${level}] ${msg}\n`)
   }
-  console.log = (...args: any[]) => { origLog(...args); writeLog('INFO', args) }
-  console.warn = (...args: any[]) => { origWarn(...args); writeLog('WARN', args) }
-  console.error = (...args: any[]) => { origError(...args); writeLog('ERROR', args) }
   console.log(`[Log] 日志文件: ${logFile}`)
 } catch (e) {
-  // If file logging fails, continue without it
+  fileLogStream = null
 }
 
 // ============ Single Instance Lock ============

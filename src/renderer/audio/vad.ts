@@ -31,7 +31,7 @@ export class VADEngine {
       positiveSpeechThreshold: this.options.positiveSpeechThreshold ?? 0.5,
       negativeSpeechThreshold: this.options.negativeSpeechThreshold ?? 0.35,
       minSpeechMs: this.options.minSpeechMs ?? 150,
-      redemptionMs: this.options.redemptionMs ?? 800,
+      redemptionMs: this.options.redemptionMs ?? 1200,
       preSpeechPadMs: this.options.preSpeechPadMs ?? 300,
       onSpeechStart: () => {
         console.log('[VAD] 检测到语音开始')

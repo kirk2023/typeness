@@ -21,6 +21,8 @@ export class PipelineController extends EventEmitter {
   private audioChunks: Buffer[] = []  // Collect chunks for offline re-transcribe
   private sapiFinalBuffer: string = ''  // Accumulate SAPI final results before processing
   private pendingAudio: Buffer[] = []  // Queue audio segments that arrive during processing
+  private prefetchedLLMPromise: Promise<string> | null = null  // Background LLM for queued audio
+  private prefetchedRawText: string = ''  // Raw STT text from prefetched audio
 
   constructor() {
     super()
@@ -200,20 +202,28 @@ export class PipelineController extends EventEmitter {
 
       let rawText: string
 
-      // Use VAD's complete audio buffer for SenseVoice (it's the accurate, full speech segment)
-      // Fall back to ScriptProcessor chunks only if VAD buffer is unavailable
-      const finalAudio = audioBuffer || (this.audioChunks.length > 0
-        ? Buffer.concat(this.audioChunks)
-        : undefined)
-
-      if (this.isStreaming && this.sttProvider?.endStream) {
-        // Streaming: pass VAD's complete audio for SenseVoice offline re-transcribe
-        rawText = await this.sttProvider.endStream(finalAudio)
-      } else if (finalAudio) {
-        // Batch: transcribe the entire buffer
-        rawText = await this.transcribe(finalAudio)
+      // Check if we already have a prefetched STT result for this audio
+      // (from prefetchQueuedAudio which processed queued audio while previous segment was still in LLM)
+      if (this.prefetchedLLMPromise && this.prefetchedRawText) {
+        rawText = this.prefetchedRawText
+        console.log(`[Pipeline] 跳过 STT，使用预取结果: "${rawText}"`)
+        this.audioChunks = []  // Clear any accumulated chunks
       } else {
-        rawText = ''
+        // Use VAD's complete audio buffer for SenseVoice (it's the accurate, full speech segment)
+        // Fall back to ScriptProcessor chunks only if VAD buffer is unavailable
+        const finalAudio = audioBuffer || (this.audioChunks.length > 0
+          ? Buffer.concat(this.audioChunks)
+          : undefined)
+
+        if (this.isStreaming && this.sttProvider?.endStream) {
+          // Streaming: pass VAD's complete audio for SenseVoice offline re-transcribe
+          rawText = await this.sttProvider.endStream(finalAudio)
+        } else if (finalAudio) {
+          // Batch: transcribe the entire buffer
+          rawText = await this.transcribe(finalAudio)
+        } else {
+          rawText = ''
+        }
       }
 
       if (!rawText || rawText.length < 2) {
@@ -222,9 +232,22 @@ export class PipelineController extends EventEmitter {
         return
       }
 
-      // LLM Processing
+      // LLM Processing (use prefetched result if available from parallel queued audio)
       this.setState(PipelineState.LLM_PROCESSING)
-      const cleanedText = await this.processText(rawText)
+      let cleanedText: string
+      if (this.prefetchedLLMPromise) {
+        console.log('[Pipeline] 使用预取 LLM 结果 (并行处理)')
+        try {
+          cleanedText = await this.prefetchedLLMPromise
+        } catch (err) {
+          console.warn('[Pipeline] 预取 LLM 失败，回退原本文本:', err)
+          cleanedText = rawText
+        }
+        this.prefetchedLLMPromise = null
+        this.prefetchedRawText = ''
+      } else {
+        cleanedText = await this.processText(rawText)
+      }
 
       // Output
       this.setState(PipelineState.TYPING)
@@ -243,13 +266,48 @@ export class PipelineController extends EventEmitter {
       }
     } finally {
       this.isProcessing = false
-      // Process any queued audio segments that arrived during processing
-      if (this.pendingAudio.length > 0) {
-        const queued = Buffer.concat(this.pendingAudio)
-        this.pendingAudio = []
-        console.log(`[Pipeline] 处理排队音频, 大小: ${queued.length} bytes`)
-        this.handleSpeechEnd(queued)
+
+      // Prefetch: if audio was queued during processing, start STT+LLM in background
+      // so the next handleSpeechEnd can use the prefetched result immediately.
+      if (this.pendingAudio.length > 0 && !this.prefetchedLLMPromise) {
+        this.prefetchQueuedAudio()
       }
+    }
+  }
+
+  /**
+   * Prefetch queued audio: run STT immediately, start LLM in background.
+   * This allows LLM processing to overlap with the current segment's LLM processing.
+   */
+  private async prefetchQueuedAudio(): Promise<void> {
+    if (this.pendingAudio.length === 0) return
+    const queued = Buffer.concat(this.pendingAudio)
+    this.pendingAudio = []
+    const durationSec = (queued.length / 2) / 16000
+    console.log(`[Pipeline][Prefetch] 开始预取 STT, 音频: ${queued.length} bytes (${durationSec.toFixed(2)}s)`)
+
+    try {
+      // Run STT for queued audio
+      let rawText: string
+      if (this.isStreaming && this.sttProvider?.endStream) {
+        rawText = await this.sttProvider.endStream(queued)
+      } else {
+        rawText = await this.transcribe(queued)
+      }
+
+      if (!rawText || rawText.length < 2) {
+        console.log('[Pipeline][Prefetch] 转录文本过短，丢弃')
+        return
+      }
+
+      console.log(`[Pipeline][Prefetch] STT 完成: "${rawText}", 启动后台 LLM`)
+      // Store raw text and start LLM in background - will be consumed by next handleSpeechEnd call
+      this.prefetchedRawText = rawText
+      this.prefetchedLLMPromise = this.processText(rawText)
+    } catch (err) {
+      console.warn('[Pipeline][Prefetch] 预取失败:', err)
+      this.prefetchedLLMPromise = null
+      this.prefetchedRawText = ''
     }
   }
 

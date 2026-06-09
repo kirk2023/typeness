@@ -107,6 +107,12 @@ interface LLMPreset {
 }
 
 const LLM_PRESETS: Record<string, LLMPreset> = {
+  agnes: {
+    baseUrl: 'https://apihub.agnes-ai.com/v1',
+    model: 'agnes-2.0-flash',
+    hint: 'Agnes AI - Sapiens 出品，免费高速模型',
+    modelHint: '可选: agnes-2.0-flash, agnes-2.0-preview',
+  },
   longcat: {
     baseUrl: 'https://api.longcat.chat/openai/v1',
     model: 'LongCat-Flash-Chat',

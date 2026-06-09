@@ -30,9 +30,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
     language: 'zh',
   },
   llm: {
-    baseUrl: 'https://api.openai.com/v1',
+    baseUrl: 'https://apihub.agnes-ai.com/v1',
     apiKey: '',
-    model: 'gpt-4o-mini',
+    model: 'agnes-2.0-flash',
     systemPrompt: DEFAULT_SYSTEM_PROMPT,
     temperature: 0.1,
   },
