@@ -1,0 +1,38 @@
+appId: com.typeness.app
+productName: Typeness
+npmRebuild: false
+directories:
+  buildResources: resources
+  output: release
+files:
+  - dist/**/*
+  - node_modules/**/*
+extraResources:
+  - from: resources/
+    to: resources/
+  - from: models/
+    to: models/
+    filter:
+      - "**/model.int8.onnx"
+      - "**/encoder*.int8.onnx"
+      - "**/decoder*.int8.onnx"
+      - "**/joiner*.int8.onnx"
+      - "**/tokens.txt"
+      - "**/configuration.json"
+  - from: scripts/
+    to: scripts/
+    filter:
+      - "sapi-recognize.ps1"
+win:
+  icon: resources/icon.ico
+  signAndEditExecutable: false
+  target:
+    - portable
+portable:
+  artifactName: Typeness-${version}-portable.exe
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+asar: false
