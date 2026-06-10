@@ -8,6 +8,9 @@ import { PipelineController } from './pipeline/controller'
 import { openSettingsWindow } from './settings-window'
 import { createFloatingBubble, updateBubbleState, updateBubblePipelineState, updateBubbleStreamingText } from './floating-bubble'
 
+// Disable hardware acceleration to fix transparent window issues on Windows
+app.disableHardwareAcceleration()
+
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let isRecording = false

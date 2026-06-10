@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <title>Typeness Bubble</title>
+  <title></title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body {
@@ -18,6 +18,7 @@
       align-items: flex-start;
       gap: 6px;
       padding: 12px;
+      background: transparent;
       -webkit-app-region: drag;
     }
     /* Draggable bubble button */
@@ -75,6 +76,10 @@
       -webkit-app-region: no-drag;
     }
     #text-panel.visible { display: block; }
+    /* Hide container drag area when idle, only show mic button */
+    #container.idle {
+      -webkit-app-region: no-drag;
+    }
     #streaming-text {
       color: rgba(255,255,255,0.65);
       font-size: 13px;

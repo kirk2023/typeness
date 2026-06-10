@@ -20,6 +20,7 @@ export function createFloatingBubble(): BrowserWindow | null {
     y: screenH - 100,
     frame: false,
     transparent: true,
+    backgroundColor: '#00000000',
     alwaysOnTop: true,
     resizable: false,
     minimizable: false,
@@ -33,6 +34,9 @@ export function createFloatingBubble(): BrowserWindow | null {
     },
   })
 
+  // Remove any title that Windows might render
+  bubbleWindow.setTitle('')
+
   // Allow dragging via -webkit-app-region: drag on the bubble element
   // but keep the center button clickable with -webkit-app-region: no-drag
   bubbleWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
@@ -43,6 +47,11 @@ export function createFloatingBubble(): BrowserWindow | null {
   } else {
     bubbleWindow.loadFile(path.join(__dirname, '../src/bubble-ui/index.html'))
   }
+
+  // Clear title again after load (page <title> might set it)
+  bubbleWindow.webContents.on('did-finish-load', () => {
+    bubbleWindow?.setTitle('')
+  })
 
   bubbleWindow.on('closed', () => {
     bubbleWindow = null
