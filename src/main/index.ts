@@ -6,7 +6,7 @@ import { getSettings, getSetting, setSetting } from './settings'
 import { IPC, PipelineState } from '../shared/types'
 import { PipelineController } from './pipeline/controller'
 import { openSettingsWindow } from './settings-window'
-import { createFloatingBubble, updateBubbleState, updateBubblePipelineState, updateBubbleStreamingText } from './floating-bubble'
+import { createFloatingBubble, updateBubbleState, updateBubblePipelineState, updateBubblePartialText, updateBubbleSegmentFinal, updateBubbleFinalResult, updateBubbleSessionEnd } from './floating-bubble'
 
 // Disable hardware acceleration to fix transparent window issues on Windows
 app.disableHardwareAcceleration()
@@ -22,6 +22,7 @@ const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
 // ============ File Logging ============
 const logDir = path.join(app.getPath('userData'), 'logs')
 const logFile = path.join(logDir, `typeness-${new Date().toISOString().slice(0, 10)}.log`)
+const LOG_RETENTION_DAYS = 14
 let fileLogStream: fs.WriteStream | null = null
 try {
   if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true })
@@ -50,6 +51,54 @@ try {
   console.log(`[Log] 日志文件: ${logFile}`)
 } catch (e) {
   fileLogStream = null
+}
+
+/**
+ * 清理 LOG_RETENTION_DAYS 天前的日志（按文件名中的日期判断，只删符合命名规则的文件）
+ */
+function cleanupOldLogs(): void {
+  try {
+    const cutoff = Date.now() - LOG_RETENTION_DAYS * 24 * 3600 * 1000
+    for (const f of fs.readdirSync(logDir)) {
+      const m = f.match(/^typeness-(\d{4}-\d{2}-\d{2})\.log$/)
+      if (!m) continue
+      const fileDate = Date.parse(`${m[1]}T00:00:00Z`)
+      if (Number.isNaN(fileDate) || fileDate >= cutoff) continue
+      fs.unlinkSync(path.join(logDir, f))
+      console.log(`[Log] 已清理过期日志: ${f}`)
+    }
+  } catch (err) {
+    console.warn('[Log] 清理过期日志失败:', err)
+  }
+}
+
+/**
+ * 清理 portable 版异常退出残留在临时目录的解压副本（每个约 950MB）。
+ * 只处理：打包环境下、目录里有 Typeness.exe、且目录超过 24 小时未改动
+ * （当前正在运行的实例目录会被排除；新解压的目录因不满 24 小时而被跳过）。
+ */
+function cleanupStalePortableExtractions(): void {
+  if (!app.isPackaged) return
+  const currentDir = path.dirname(process.execPath)
+  const tmpDir = app.getPath('temp')
+  try {
+    for (const name of fs.readdirSync(tmpDir)) {
+      const dir = path.join(tmpDir, name)
+      try {
+        const stat = fs.statSync(dir)
+        if (!stat.isDirectory()) continue
+        if (Date.now() - stat.mtimeMs < 24 * 3600 * 1000) continue
+        if (!fs.existsSync(path.join(dir, 'Typeness.exe'))) continue
+        if (path.resolve(dir) === path.resolve(currentDir)) continue
+        fs.rmSync(dir, { recursive: true, force: true })
+        console.log(`[Cleanup] 已删除残留的 portable 解压目录: ${dir}`)
+      } catch {
+        // 单个目录处理失败不影响其他目录
+      }
+    }
+  } catch (err) {
+    console.warn('[Cleanup] 扫描临时目录失败:', err)
+  }
 }
 
 // ============ Single Instance Lock ============
@@ -148,6 +197,8 @@ function createMainWindow(): BrowserWindow {
       nodeIntegration: false,
       // Allow file:// renderer to import() from local http:// VAD server
       webSecurity: false,
+      // 窗口隐藏时不要节流音频/VAD 处理
+      backgroundThrottling: false,
     },
   })
 
@@ -236,15 +287,32 @@ function updateTrayIcon(state: PipelineState): void {
   }
 }
 
+// 防连击：上一次切换完成后 300ms 内的切换请求直接忽略。
+// 场景：首次启动时模型加载阻塞主进程数秒，用户的重复按键会在解除阻塞后
+// 成串涌入，不加冷却会导致开始/停止状态被快速翻转多次。
+const TOGGLE_COOLDOWN_MS = 300
+let lastToggleFinishedAt = 0
+
 async function toggleRecording(): Promise<void> {
   if (isToggling) {
     console.log('[Typeness] 正在切换中，忽略重复点击')
     return
   }
+  if (Date.now() - lastToggleFinishedAt < TOGGLE_COOLDOWN_MS) {
+    console.log('[Typeness] 切换冷却中，忽略连击')
+    return
+  }
+
   isToggling = true
 
   try {
     isRecording = !isRecording
+
+    // 立即更新 UI（不等引擎初始化），让用户马上看到状态变化、避免误以为没按上而连按
+    if (tray) {
+      updateTrayMenu(tray, isRecording)
+    }
+    updateBubbleState(isRecording)
 
     if (isRecording) {
       try {
@@ -265,6 +333,11 @@ async function toggleRecording(): Promise<void> {
           body: msg,
           silent: false,
         }).show()
+        // 启动失败也要把 UI 状态回退
+        if (tray) {
+          updateTrayMenu(tray, false)
+        }
+        updateBubbleState(false)
         return
       }
     } else {
@@ -272,13 +345,8 @@ async function toggleRecording(): Promise<void> {
       mainWindow?.webContents.send(IPC.PIPELINE_TOGGLE, false)
       console.log('[Typeness] 停止录音')
     }
-
-    if (tray) {
-      updateTrayMenu(tray, isRecording)
-    }
-    // Sync bubble state
-    updateBubbleState(isRecording)
   } finally {
+    lastToggleFinishedAt = Date.now()
     isToggling = false
   }
 }
@@ -374,7 +442,8 @@ function registerIpcHandlers(): void {
 
   // Audio devices
   ipcMain.handle(IPC.AUDIO_GET_DEVICES, async () => {
-    const devices = await mainWindow?.webContents.executeJavaScript(
+    if (!mainWindow || mainWindow.isDestroyed()) return []
+    const devices = await mainWindow.webContents.executeJavaScript(
       `navigator.mediaDevices.enumerateDevices().then(d => d.filter(x => x.kind === 'audioinput').map(x => ({ deviceId: x.deviceId, label: x.label })))`
     )
     return devices || []
@@ -493,34 +562,58 @@ function registerIpcHandlers(): void {
 }
 
 function setupPipelineEvents(): void {
+  // 窗口可能已销毁（退出中），统一走安全发送
+  const sendToMain = (channel: string, payload: unknown): void => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(channel, payload)
+    }
+  }
+
   // Update tray icon when pipeline state changes
   pipeline.on('state-changed', (state: PipelineState) => {
     updateTrayIcon(state)
     // Also notify renderer for UI updates
-    mainWindow?.webContents.send(IPC.PIPELINE_STATE_CHANGED, state)
+    sendToMain(IPC.PIPELINE_STATE_CHANGED, state)
     // Forward to floating bubble
     updateBubblePipelineState(state)
   })
 
-  // Forward partial results (streaming) to renderer and bubble
+  // Forward partial results (live transcript / LLM streaming) to renderer and bubble
   pipeline.on('partial-result', (text: string) => {
-    mainWindow?.webContents.send(IPC.PIPELINE_PARTIAL_RESULT, text)
-    // Also show in bubble tooltip
-    updateBubbleStreamingText(text)
+    sendToMain(IPC.PIPELINE_PARTIAL_RESULT, text)
+    updateBubblePartialText(text)
   })
 
-  // Forward results to renderer and bubble
+  // Forward finalized speech segments (session transcript lines)
+  pipeline.on('segment-final', (text: string) => {
+    sendToMain(IPC.PIPELINE_SEGMENT_FINAL, text)
+    updateBubbleSegmentFinal(text)
+  })
+
+  // Session ended with no usable content
+  pipeline.on('session-empty', () => {
+    updateBubbleSessionEnd()
+  })
+
+  // 静音超时自动停止：走正常停止流程，保证 UI/托盘状态同步
+  pipeline.on('auto-stop', () => {
+    if (isRecording) {
+      console.log('[Typeness] 自动停止（静音超时）')
+      void toggleRecording()
+    }
+  })
+
+  // Forward final session result to renderer and bubble
   pipeline.on('result', (result: { raw: string; cleaned: string }) => {
-    console.log(`[Typeness] 结果 → 原始: "${result.raw}" | 整理: "${result.cleaned}"`)
-    mainWindow?.webContents.send(IPC.PIPELINE_RESULT, result)
-    // Show final result in bubble tooltip (no popup notification)
-    updateBubbleStreamingText(result.cleaned)
+    console.log(`[Typeness] 会话结果 → 原始: "${result.raw}" | 整理: "${result.cleaned}"`)
+    sendToMain(IPC.PIPELINE_RESULT, result)
+    updateBubbleFinalResult(result)
   })
 
   // Forward errors to renderer (no popup for minor errors)
   pipeline.on('error', (error: { stage: string; message: string }) => {
     console.error(`[Typeness] 错误 [${error.stage}]:`, error.message)
-    mainWindow?.webContents.send(IPC.PIPELINE_ERROR, error)
+    sendToMain(IPC.PIPELINE_ERROR, error)
   })
 }
 
@@ -544,6 +637,20 @@ app.whenReady().then(async () => {
   if (generalSettings.showFloatingBubble) {
     createFloatingBubble()
   }
+
+  // 后台预热 sherpa-onnx 模型（加载约 2-3 秒，会短暂阻塞主进程），
+  // 提前到启动阶段做，避免用户第一次按快捷键时卡顿导致误以为没按上而连按
+  setTimeout(() => {
+    void pipeline.prewarm().catch((err) => {
+      console.warn('[Typeness] 模型预热失败:', err)
+    })
+  }, 100)
+
+  // 延迟清理：过期日志 + portable 残留解压目录（不阻塞启动）
+  setTimeout(() => {
+    cleanupOldLogs()
+    cleanupStalePortableExtractions()
+  }, 5000)
 
   console.log('[Typeness] 应用已启动')
   console.log(`[Typeness] 按 ${getSettings().hotkey.toggleRecording} 开始/停止录音`)

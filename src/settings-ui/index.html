@@ -150,6 +150,14 @@
         <div class="hint" id="llm-model-hint"></div>
       </div>
       <div class="field">
+        <label>整理模式</label>
+        <select id="llm-outputMode">
+          <option value="clean">轻度清理（当输入法用，尽量保留原句）</option>
+          <option value="summarize">整理总结（允许归纳重组、去掉绕圈子的话）</option>
+        </select>
+        <div class="hint">轻度清理使用下方自定义提示词；整理总结使用内置提示词</div>
+      </div>
+      <div class="field">
         <label>Temperature</label>
         <div class="range-field">
           <input type="range" id="llm-temperature" min="0" max="1" step="0.1" value="0.3" />
@@ -184,6 +192,19 @@
         <input type="number" id="audio-silenceDuration" min="200" max="3000" step="100" value="800" />
         <div class="hint">语音停顿多久后判定为说话结束</div>
       </div>
+      <div class="field">
+        <label>自动停止</label>
+        <select id="audio-autoStopEnabled">
+          <option value="true">开启（静音超时后自动结束并整理输出）</option>
+          <option value="false">关闭（手动按快捷键结束）</option>
+        </select>
+        <div class="hint">说完内容后持续安静达到设定时长，会话自动结束并输出，无需再按快捷键</div>
+      </div>
+      <div class="field">
+        <label>自动停止静音时长 (秒)</label>
+        <input type="number" id="audio-autoStopSilenceSec" min="3" max="60" step="1" value="8" />
+        <div class="hint">建议 5-10 秒：太短容易在思考停顿时被误判为说完</div>
+      </div>
     </div>
 
     <!-- General Section -->
@@ -206,6 +227,13 @@
         <select id="general-launchAtStartup">
           <option value="false">关闭</option>
           <option value="true">开启</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>调试模式</label>
+        <select id="general-debug">
+          <option value="false">关闭</option>
+          <option value="true">开启（保存识别音频到临时目录用于排查）</option>
         </select>
       </div>
       <div class="field">

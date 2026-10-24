@@ -13,13 +13,19 @@
       user-select: none;
       font-family: 'Microsoft YaHei', 'Segoe UI', sans-serif;
     }
+    body {
+      display: flex;
+      align-items: flex-end;      /* 内容贴底，增高时向上生长 */
+      justify-content: flex-end;
+    }
     #container {
       display: flex;
-      align-items: flex-start;
-      gap: 6px;
+      align-items: flex-end;
+      gap: 8px;
       padding: 12px;
       background: transparent;
       -webkit-app-region: drag;
+      max-width: 100%;
     }
     /* Draggable bubble button */
     #bubble-btn {
@@ -62,48 +68,79 @@
       fill: white;
       pointer-events: none;
     }
-    /* Streaming text panel */
-    #text-panel {
+    /* 滚动字幕面板 */
+    #transcript-panel {
       display: none;
-      max-width: 300px;
-      min-width: 80px;
+      flex-direction: column;
+      max-width: 430px;
+      min-width: 120px;
       background: rgba(30, 30, 30, 0.92);
       border: 1px solid rgba(255,255,255,0.15);
-      border-radius: 10px;
-      padding: 8px 12px;
+      border-radius: 12px;
+      padding: 10px 14px;
       backdrop-filter: blur(10px);
       box-shadow: 0 4px 20px rgba(0,0,0,0.5);
-      -webkit-app-region: no-drag;
+      -webkit-app-region: drag;
     }
-    #text-panel.visible { display: block; }
-    /* Hide container drag area when idle, only show mic button */
-    #container.idle {
-      -webkit-app-region: no-drag;
+    #transcript-panel.visible { display: flex; }
+    /* 已定稿段落 */
+    #transcript {
+      max-height: 280px;
+      overflow-y: auto;
+      overscroll-behavior: contain;
     }
-    #streaming-text {
-      color: rgba(255,255,255,0.65);
+    #transcript::-webkit-scrollbar { width: 4px; }
+    #transcript::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.25); border-radius: 2px; }
+    #transcript .seg {
+      color: rgba(255,255,255,0.88);
       font-size: 13px;
-      line-height: 1.5;
+      line-height: 1.6;
+      margin-bottom: 4px;
       word-break: break-all;
     }
-    #streaming-text.final {
+    #transcript.dimmed .seg { color: rgba(255,255,255,0.45); }
+    /* 正在说的半句（灰） */
+    #partial-line {
+      color: rgba(255,255,255,0.55);
+      font-size: 13px;
+      line-height: 1.6;
+      word-break: break-all;
+    }
+    #partial-line:empty { display: none; }
+    /* LLM 流式/最终整理结果（蓝） */
+    #result-line {
       color: #4fc3f7;
-      font-weight: 500;
+      font-size: 13px;
+      line-height: 1.6;
+      word-break: break-all;
+      border-top: 1px dashed rgba(255,255,255,0.2);
+      margin-top: 6px;
+      padding-top: 6px;
+      white-space: pre-wrap;
     }
-    #streaming-text.error {
-      color: #ef5350;
+    #result-line.final { color: #4fc3f7; font-weight: 600; }
+    #result-line:empty { display: none; }
+    /* 状态提示 */
+    #status-line {
+      color: rgba(255,255,255,0.4);
+      font-size: 11px;
+      margin-top: 6px;
     }
+    #status-line:empty { display: none; }
   </style>
 </head>
 <body>
   <div id="container">
-    <div id="bubble-btn" title="点击切换录音">
+    <div id="transcript-panel">
+      <div id="transcript"></div>
+      <div id="partial-line"></div>
+      <div id="result-line"></div>
+      <div id="status-line"></div>
+    </div>
+    <div id="bubble-btn" title="点击开始/结束录音">
       <svg id="mic-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
         <path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/>
       </svg>
-    </div>
-    <div id="text-panel">
-      <div id="streaming-text"></div>
     </div>
   </div>
   <script type="module" src="./main.ts"></script>

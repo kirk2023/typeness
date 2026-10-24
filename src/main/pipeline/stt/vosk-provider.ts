@@ -188,18 +188,20 @@ export class VoskSTTProvider implements STTProvider {
     const text = (result.text || '').trim()
 
     if (isEndpoint) {
+      // 段内端点：把这段文本并入内部累积，随后 VAD 断句会走 SenseVoice 定稿（segment-final），
+      // 这里不再返回累积文本，避免与气泡上已定稿的段落重复显示
       if (text.length > 0) {
         this.accumulatedText += text
         console.log(`[SherpaSTT] 端点检测, 段: "${text}", 累积: "${this.accumulatedText}"`)
       }
       this.onlineRecognizer.reset(this.stream)
       this.lastText = ''
-      return this.accumulatedText || null
+      return null
     }
 
     if (text && text !== this.lastText) {
       this.lastText = text
-      return this.accumulatedText + text
+      return text  // 仅当前段的实时 partial
     }
     return null
   }
@@ -268,11 +270,13 @@ export class VoskSTTProvider implements STTProvider {
       float32[i] = int16[i] / 32768.0
     }
 
-    // === DEBUG: 保存音频到 WAV 文件供检查 ===
+    // === DEBUG: 保存音频到 WAV 文件供检查（仅 debug 模式） ===
     try {
-      const wavPath = path.join(app.getPath('temp'), 'typeness-sensevoice-debug.wav')
-      this.saveWav(wavPath, float32, 16000)
-      console.log(`[SherpaSTT] 调试音频已保存: ${wavPath}`)
+      if (getSetting('general').debug) {
+        const wavPath = path.join(app.getPath('temp'), 'typeness-sensevoice-debug.wav')
+        this.saveWav(wavPath, float32, 16000)
+        console.log(`[SherpaSTT] 调试音频已保存: ${wavPath}`)
+      }
     } catch (err) {
       console.warn('[SherpaSTT] 保存调试音频失败:', err)
     }

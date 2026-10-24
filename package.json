@@ -1,6 +1,6 @@
 {
   "name": "typeness",
-  "version": "0.1.0",
+  "version": "0.2.3",
   "description": "Voice input method that cleans up spoken text",
   "author": "Typeness",
   "main": "dist/main/index.js",
@@ -26,7 +26,6 @@
     "@ricky0123/vad-web": "^0.0.30",
     "electron-store": "^11.0.0",
     "robotjs": "^0.7.1",
-    "sherpa-onnx-node": "^1.13.2",
-    "vosk-browser": "^0.0.8"
+    "sherpa-onnx-node": "^1.13.2"
   }
 }

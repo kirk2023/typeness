@@ -6,6 +6,7 @@ export const IPC = {
   PIPELINE_SPEECH_END: 'pipeline:speech-end',
   PIPELINE_STATE_CHANGED: 'pipeline:state-changed',
   PIPELINE_PARTIAL_RESULT: 'pipeline:partial-result',
+  PIPELINE_SEGMENT_FINAL: 'pipeline:segment-final',
   PIPELINE_RESULT: 'pipeline:result',
   PIPELINE_ERROR: 'pipeline:error',
   PIPELINE_WEB_SPEECH_TEXT: 'pipeline:web-speech-text',  // Pre-recognized text from Web Speech API
@@ -30,6 +31,9 @@ export enum PipelineState {
 // STT mode
 export type STTMode = 'offline' | 'cloud'
 
+// LLM output mode: light cleanup (input-method style) vs full summarize
+export type LLMOutputMode = 'clean' | 'summarize'
+
 // Output method
 export type OutputMethod = 'clipboard-paste' | 'direct-type'
 
@@ -49,6 +53,7 @@ export interface AppSettings {
     model: string
     systemPrompt: string
     temperature: number
+    outputMode: LLMOutputMode
   }
   hotkey: {
     toggleRecording: string
@@ -61,11 +66,14 @@ export interface AppSettings {
     vadSensitivity: number
     silenceDuration: number
     inputDeviceId: string
+    autoStopEnabled: boolean
+    autoStopSilenceSec: number
   }
   general: {
     launchAtStartup: boolean
     showFloatingBubble: boolean
     language: 'zh' | 'en'
+    debug: boolean
   }
 }
 

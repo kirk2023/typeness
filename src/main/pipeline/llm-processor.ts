@@ -1,22 +1,17 @@
 import { getSetting } from '../settings'
+import { SUMMARIZE_SYSTEM_PROMPT } from '../../shared/constants'
 
-// 常见 LLM 幻觉/对话式回复，需要被过滤掉
-const HALLUCINATION_PATTERNS = [
+// 对话式回复的开头特征 —— 清理结果绝不该以这些形式出现
+const CONVERSATIONAL_PATTERNS = [
   /^请提供/,
   /^请问您需要/,
   /^请告诉我/,
   /^请问有什么/,
-  /^好的[，,]/,
-  /^当然[，,]/,
-  /^没问题[，,]/,
-  /^非常抱歉/,
-  /^作为(一个|AI)/,
-  /^我是/,
+  /^作为(一个)?(AI|人工智能|助手)/,
   /^我会按照规则/,
   /我会为您/,
-  /^以下是整理后的/,
-  /^整理后的文本/,
   /^以下是/,
+  /^整理后的文本/,
   /^希望以上/,
   /^如有其他/,
   /^如果您还有/,
@@ -31,7 +26,15 @@ export class LLMProcessor {
     if (!config.apiKey) {
       throw new Error('LLM 处理需要配置 API Key，请在设置中填写')
     }
-    console.log(`[LLM] 初始化完成: ${config.baseUrl} / ${config.model}`)
+    console.log(`[LLM] 初始化完成: ${config.baseUrl} / ${config.model} (模式: ${config.outputMode})`)
+  }
+
+  private getSystemPrompt(): string {
+    const config = getSetting('llm')
+    if (config.outputMode === 'summarize') {
+      return SUMMARIZE_SYSTEM_PROMPT
+    }
+    return config.systemPrompt
   }
 
   /**
@@ -48,11 +51,11 @@ export class LLMProcessor {
       model: config.model,
       stream: true,
       messages: [
-        { role: 'system', content: config.systemPrompt },
+        { role: 'system', content: this.getSystemPrompt() },
         { role: 'user', content: rawText },
       ],
       temperature: config.temperature,
-      max_tokens: 2000,
+      max_tokens: 4000,
     }
 
     console.log(`[LLM] 流式处理 (${rawText.length}字): "${rawText.slice(0, 80)}..."`)
@@ -64,7 +67,7 @@ export class LLMProcessor {
         Authorization: `Bearer ${config.apiKey}`,
       },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(30000),
     })
 
     if (!response.ok) {
@@ -109,8 +112,8 @@ export class LLMProcessor {
     const cleanedText = fullText.trim() || rawText
 
     // Filter hallucinations
-    if (this.isHallucination(cleanedText)) {
-      console.warn(`[LLM] 检测到幻觉，回退原始文本`)
+    if (this.isHallucination(cleanedText, rawText, config.outputMode)) {
+      console.warn(`[LLM] 检测到幻觉/跑题输出，回退原始文本`)
       return rawText
     }
 
@@ -119,53 +122,54 @@ export class LLMProcessor {
   }
 
   /**
-   * Non-streaming LLM processing (fallback).
+   * 幻觉判定：
+   * - 任何模式下，出现对话式回复特征都视为幻觉
+   * - 清理模式下额外检查输出与原文的贴合度（总结模式允许大幅改写，不做贴合度检查）
    */
-  async process(rawText: string): Promise<string> {
-    const config = getSetting('llm')
-    const url = `${config.baseUrl}/chat/completions`
-
-    const body = {
-      model: config.model,
-      messages: [
-        { role: 'system', content: config.systemPrompt },
-        { role: 'user', content: rawText },
-      ],
-      temperature: config.temperature,
-      max_tokens: 2000,
-    }
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${config.apiKey}`,
-      },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(15000),
-    })
-
-    if (!response.ok) {
-      const errorText = await response.text()
-      throw new Error(`LLM API 错误 (${response.status}): ${errorText}`)
-    }
-
-    const result = await response.json()
-    let cleanedText = result.choices?.[0]?.message?.content?.trim() || rawText
-
-    if (this.isHallucination(cleanedText)) {
-      console.warn(`[LLM] 检测到幻觉，回退原始文本`)
-      cleanedText = rawText
-    }
-
-    console.log(`[LLM] 整理结果: "${cleanedText.slice(0, 80)}"`)
-    return cleanedText
-  }
-
-  private isHallucination(text: string): boolean {
-    for (const pattern of HALLUCINATION_PATTERNS) {
+  private isHallucination(text: string, rawText: string, mode: 'clean' | 'summarize'): boolean {
+    for (const pattern of CONVERSATIONAL_PATTERNS) {
       if (pattern.test(text)) return true
     }
+
+    if (mode === 'clean') {
+      const overlap = this.charOverlapRatio(rawText, text)
+      const lengthRatio = text.length / Math.max(rawText.length, 1)
+      // 清理只删不改：输出明显变长、或与原文几乎没有共同字符，都说明模型跑题了
+      if (lengthRatio > 1.8 || overlap < 0.4) {
+        console.warn(`[LLM] 输出偏离原文 (贴合度 ${overlap.toFixed(2)}, 长度比 ${lengthRatio.toFixed(2)})`)
+        return true
+      }
+    }
     return false
+  }
+
+  /** 输出字符中也在原文出现过的比例（近似贴合度） */
+  private charOverlapRatio(raw: string, output: string): number {
+    if (!output) return 1
+    const rawSet = new Set(raw)
+    let hit = 0
+    for (const ch of output) {
+      if (rawSet.has(ch)) hit++
+    }
+    return hit / output.length
+  }
+
+  /**
+   * 本地规则清理：LLM 不可用/失败时的离线兜底，只做最保守的口水话剔除
+   */
+  localClean(text: string): string {
+    let t = text
+    // 连续的语气助词（嗯嗯、啊啊、呃…）
+    t = t.replace(/[嗯呃]{1,}/g, '')
+    // 口头禅（仅出现在停顿边界时删除，避免误伤"这个很重要"这类正常用法）
+    t = t.replace(/(^|[，。！？,!?；;\s])(就是说|怎么说呢|这么说吧|那个啥|等一下|让我想想|怎么说呢)(?=[，。！？,!?；;\s]|$)/g, '$1')
+    // 句尾的"对吧""是吧""你知道吗"
+    t = t.replace(/[，,]?(对吧|是不是|是吧|你知道吗|对不对)(?=[。！？!?；;\s]|$)/g, '')
+    // 同一个字连续重复 3 次以上（哈哈哈→哈）
+    t = t.replace(/(.)\1{2,}/g, '$1')
+    // 重复的标点
+    t = t.replace(/([，。！？、；：,!?;:])\s*\1+/g, '$1')
+    t = t.replace(/\s{2,}/g, ' ')
+    return t.trim()
   }
 }

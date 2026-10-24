@@ -38,13 +38,34 @@ let isRecording = false
 let isSpeaking = false  // Only send chunks when VAD detects speech
 let chunkProcessor: ScriptProcessorNode | null = null
 let audioContextForChunk: AudioContext | null = null
+// 音频引擎操作串行链：开始/停止绝不并发执行，杜绝多套引擎同时采集
+let engineOp: Promise<void> = Promise.resolve()
 
-async function startListening(): Promise<void> {
-  // Use VAD + sherpa-onnx pipeline (or SAPI via main process)
+/** 彻底销毁当前所有音频资源（VAD、采集器、块处理器） */
+function teardownAudio(): void {
+  isSpeaking = false
+  cleanupChunkProcessor()
+  vadEngine?.destroy()
+  audioCapture?.destroy()
+  vadEngine = null
+  audioCapture = null
+}
+
+async function startEngine(): Promise<void> {
+  if (audioCapture && vadEngine) return  // 已在运行，不重复创建
+  teardownAudio()  // 防御：先清掉可能存在的残留资源
+
   try {
     console.log('[Renderer] Step 1: 正在初始化音频捕获...')
+    // 读取音频设置（灵敏度/静音时长/麦克风设备）
+    const audioSettings = (await window.electronAPI.getSetting('audio')) as {
+      vadSensitivity: number
+      silenceDuration: number
+      inputDeviceId: string
+    }
+
     const capture = new AudioCapture()
-    await capture.init()
+    await capture.init(audioSettings.inputDeviceId || undefined)
     console.log('[Renderer] Step 1 ✅ 音频捕获初始化成功')
 
     const stream = capture.getStream()
@@ -54,7 +75,11 @@ async function startListening(): Promise<void> {
     setupChunkProcessor(stream)
 
     console.log('[Renderer] Step 2: 正在初始化 VAD 引擎...')
+    const sensitivity = audioSettings.vadSensitivity > 0 ? audioSettings.vadSensitivity : 0.5
     const vad = new VADEngine({
+      positiveSpeechThreshold: sensitivity,
+      negativeSpeechThreshold: Math.max(0.1, sensitivity - 0.15),
+      redemptionMs: audioSettings.silenceDuration > 0 ? audioSettings.silenceDuration : 800,
       onSpeechStart: () => {
         console.log('[Renderer] ✅ 语音开始')
         isSpeaking = true
@@ -71,16 +96,13 @@ async function startListening(): Promise<void> {
       },
     })
 
+    console.log(`[Renderer] VAD 参数: 灵敏度=${sensitivity}, 静音判定=${audioSettings.silenceDuration}ms`)
     await vad.init(stream)
     vadEngine = vad
     console.log('[Renderer] Step 2 ✅ VAD 引擎初始化成功，正在监听麦克风...')
   } catch (err) {
-    audioCapture?.destroy()
-    audioCapture = null
-    vadEngine?.destroy()
-    vadEngine = null
-    isSpeaking = false
-    cleanupChunkProcessor()
+    // 启动失败：清干净，别留半初始化的资源
+    teardownAudio()
     const msg = err instanceof Error ? `${err.message}\n${err.stack || ''}` : String(err)
     console.error('[Renderer] ❌ 音频引擎启动失败:', msg)
     window.electronAPI.reportError('音频引擎启动失败', msg.split('\n')[0])
@@ -112,13 +134,8 @@ function cleanupChunkProcessor(): void {
   audioContextForChunk = null
 }
 
-function stopListening(): void {
-  isSpeaking = false
-  vadEngine?.destroy()
-  audioCapture?.destroy()
-  vadEngine = null
-  audioCapture = null
-  cleanupChunkProcessor()
+function stopEngine(): void {
+  teardownAudio()
   console.log('[Renderer] 音频引擎已停止')
 }
 
@@ -131,17 +148,20 @@ function float32ToInt16(float32Array: Float32Array): ArrayBuffer {
   return int16Array.buffer
 }
 
-// Listen for toggle events from main process
-window.electronAPI.onToggleRecording(async (enabled: boolean) => {
+// Listen for toggle events from main process.
+// 所有开始/停止操作排入串行链执行：即使事件成串到达（比如主进程卡顿后积压），
+// 也只会有至多一套音频引擎存活，不会叠加产生重复音频。
+window.electronAPI.onToggleRecording((enabled: boolean) => {
   isRecording = enabled
-  isSpeaking = false
   statusEl.textContent = `状态: ${enabled ? '监听中...' : '空闲'}`
 
-  if (enabled) {
-    await startListening()
-  } else {
-    stopListening()
-  }
+  engineOp = engineOp.then(() => {
+    if (enabled) {
+      return startEngine()
+    }
+    stopEngine()
+    return undefined
+  })
 })
 
 // Listen for partial results (streaming) - log only, bubble shows them

@@ -8,6 +8,7 @@ const IPC = {
   PIPELINE_WEB_SPEECH_TEXT: 'pipeline:web-speech-text',
   PIPELINE_STATE_CHANGED: 'pipeline:state-changed',
   PIPELINE_PARTIAL_RESULT: 'pipeline:partial-result',
+  PIPELINE_SEGMENT_FINAL: 'pipeline:segment-final',
   PIPELINE_RESULT: 'pipeline:result',
   PIPELINE_ERROR: 'pipeline:error',
   SETTINGS_GET: 'settings:get',
@@ -53,6 +54,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       callback(text)
     })
   },
+  onPipelineSegmentFinal: (callback: (text: string) => void) => {
+    ipcRenderer.on(IPC.PIPELINE_SEGMENT_FINAL, (_event, text: string) => {
+      callback(text)
+    })
+  },
   onPipelineError: (callback: (error: { stage: string; message: string }) => void) => {
     ipcRenderer.on(IPC.PIPELINE_ERROR, (_event, error) => {
       callback(error)
@@ -92,10 +98,28 @@ contextBridge.exposeInMainWorld('electronAPI', {
       callback(state)
     })
   },
-  onBubbleStreamingText: (callback: (text: string) => void) => {
-    ipcRenderer.on('bubble:streaming-text', (_event, text: string) => {
+  onBubblePartialText: (callback: (text: string) => void) => {
+    ipcRenderer.on('bubble:partial-text', (_event, text: string) => {
       callback(text)
     })
+  },
+  onBubbleSegmentFinal: (callback: (text: string) => void) => {
+    ipcRenderer.on('bubble:segment-final', (_event, text: string) => {
+      callback(text)
+    })
+  },
+  onBubbleFinalResult: (callback: (result: { raw: string; cleaned: string }) => void) => {
+    ipcRenderer.on('bubble:final-result', (_event, result: { raw: string; cleaned: string }) => {
+      callback(result)
+    })
+  },
+  onBubbleSessionEnd: (callback: () => void) => {
+    ipcRenderer.on('bubble:session-end', () => {
+      callback()
+    })
+  },
+  bubbleResize: (height: number) => {
+    ipcRenderer.send('bubble:resize', height)
   },
 
   // Report renderer errors to main process for notification

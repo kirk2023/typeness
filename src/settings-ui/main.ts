@@ -51,17 +51,21 @@ function populateForm(settings: AppSettings): void {
   setVal('llm-model', settings.llm.model)
   setVal('llm-temperature', String(settings.llm.temperature))
   setVal('llm-systemPrompt', settings.llm.systemPrompt)
+  setVal('llm-outputMode', settings.llm.outputMode ?? 'clean')
   document.getElementById('llm-temperature-value')!.textContent = String(settings.llm.temperature)
 
   // Audio
   setVal('audio-vadSensitivity', String(settings.audio.vadSensitivity))
   setVal('audio-silenceDuration', String(settings.audio.silenceDuration))
+  setVal('audio-autoStopEnabled', String(settings.audio.autoStopEnabled ?? true))
+  setVal('audio-autoStopSilenceSec', String(settings.audio.autoStopSilenceSec ?? 8))
   document.getElementById('audio-vadSensitivity-value')!.textContent = String(settings.audio.vadSensitivity)
 
   // General
   setVal('hotkey-toggleRecording', settings.hotkey.toggleRecording)
   setVal('output-method', settings.output.method)
   setVal('general-launchAtStartup', String(settings.general.launchAtStartup))
+  setVal('general-debug', String(settings.general.debug ?? false))
 
   // Highlight matching LLM preset
   highlightPreset(settings.llm.baseUrl)
@@ -221,6 +225,7 @@ function collectSettings(): AppSettings {
       model: getVal('llm-model'),
       temperature: parseFloat(getVal('llm-temperature')),
       systemPrompt: getVal('llm-systemPrompt'),
+      outputMode: getVal('llm-outputMode') === 'summarize' ? 'summarize' : 'clean',
     },
     hotkey: {
       toggleRecording: getVal('hotkey-toggleRecording'),
@@ -233,11 +238,14 @@ function collectSettings(): AppSettings {
       vadSensitivity: parseFloat(getVal('audio-vadSensitivity')),
       silenceDuration: parseInt(getVal('audio-silenceDuration'), 10),
       inputDeviceId: currentSettings.audio.inputDeviceId,
+      autoStopEnabled: getVal('audio-autoStopEnabled') !== 'false',
+      autoStopSilenceSec: parseInt(getVal('audio-autoStopSilenceSec'), 10) || 8,
     },
     general: {
       launchAtStartup: getVal('general-launchAtStartup') === 'true',
       showFloatingBubble: currentSettings.general.showFloatingBubble,
       language: currentSettings.general.language,
+      debug: getVal('general-debug') === 'true',
     },
   }
 }

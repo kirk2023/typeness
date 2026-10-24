@@ -28,6 +28,7 @@ win:
   signAndEditExecutable: false
   target:
     - portable
+    - nsis
 portable:
   artifactName: Typeness-${version}-portable.exe
 nsis:
@@ -35,4 +36,5 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
+  artifactName: Typeness-${version}-setup.exe
 asar: false
