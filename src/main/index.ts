@@ -6,7 +6,7 @@ import { getSettings, getSetting, setSetting } from './settings'
 import { IPC, PipelineState } from '../shared/types'
 import { PipelineController } from './pipeline/controller'
 import { openSettingsWindow } from './settings-window'
-import { createFloatingBubble, updateBubbleState, updateBubblePipelineState, updateBubblePartialText, updateBubbleSegmentFinal, updateBubbleFinalResult, updateBubbleSessionEnd } from './floating-bubble'
+import { createFloatingBubble, updateBubbleState, updateBubblePipelineState, updateBubblePartialText, updateBubbleSegmentFinal, updateBubbleFinalResult, updateBubbleSessionEnd, updateBubbleNotice } from './floating-bubble'
 
 // Disable hardware acceleration to fix transparent window issues on Windows
 app.disableHardwareAcceleration()
@@ -593,6 +593,11 @@ function setupPipelineEvents(): void {
   // Session ended with no usable content
   pipeline.on('session-empty', () => {
     updateBubbleSessionEnd()
+  })
+
+  // 状态提示（如 AI 整理降级警示）
+  pipeline.on('notice', (message: string) => {
+    updateBubbleNotice(message)
   })
 
   // 静音超时自动停止：走正常停止流程，保证 UI/托盘状态同步

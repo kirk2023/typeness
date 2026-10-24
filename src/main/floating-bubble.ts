@@ -140,6 +140,13 @@ export function updateBubbleSessionEnd(): void {
   }
 }
 
+/** 状态提示（如 AI 整理降级为本地清理的警示） */
+export function updateBubbleNotice(message: string): void {
+  if (bubbleWindow && !bubbleWindow.isDestroyed()) {
+    bubbleWindow.webContents.send('bubble:notice', message)
+  }
+}
+
 export function getBubbleWindow(): BrowserWindow | null {
   return bubbleWindow
 }

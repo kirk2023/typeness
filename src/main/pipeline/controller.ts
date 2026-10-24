@@ -6,6 +6,7 @@ import { VoskSTTProvider } from './stt/vosk-provider'
 import { WindowsSAPIProvider } from './stt/windows-sapi-provider'
 import { LLMProcessor } from './llm-processor'
 import { TextOutput } from './text-output'
+import { recordForegroundWindow, restoreForegroundIfChanged, ForegroundWindow } from './focus-guard'
 
 /**
  * 会话式听写模型：
@@ -36,6 +37,9 @@ export class PipelineController extends EventEmitter {
   private autoStopTimer: ReturnType<typeof setInterval> | null = null
   private lastActivityAt = 0             // 最近一次语音活动（说话开始/音频块/段落定稿）
   private autoStopEmitted = false
+
+  // 会话开始时的前台窗口（输出前若焦点被抢走，恢复到这个窗口再粘贴）
+  private sessionFocus: ForegroundWindow | null = null
 
   constructor() {
     super()
@@ -143,6 +147,12 @@ export class PipelineController extends EventEmitter {
 
     this.setState(PipelineState.LISTENING)
     this.startAutoStopWatchdog()
+
+    // 后台记录当前前台窗口（约 0.5s），供输出前恢复焦点用
+    this.sessionFocus = null
+    void recordForegroundWindow().then((w) => {
+      if (w && this.sessionActive) this.sessionFocus = w
+    })
   }
 
   /**
@@ -358,17 +368,23 @@ export class PipelineController extends EventEmitter {
             }
           )
         } catch (llmErr) {
-          console.warn('[Pipeline] LLM 处理失败，使用本地规则清理兜底:', llmErr)
+          const errMsg = llmErr instanceof Error ? llmErr.message : String(llmErr)
+          console.warn(`[Pipeline] LLM 处理失败，使用本地规则清理兜底: ${errMsg}`)
+          this.emit('notice', '⚠ AI 整理服务超时/失败，本次已用本地清理输出')
           finalText = this.llmProcessor.localClean(rawText)
           this.emit('partial-result', finalText)
         }
       } else {
+        this.emit('notice', '⚠ 未配置 AI（设置中填写 API Key 后可自动整理），本次为本地清理')
         finalText = this.llmProcessor.localClean(rawText)
         this.emit('partial-result', finalText)
       }
 
-      // 输出最终文本
+      // 输出最终文本：若焦点被弹窗等抢走，先恢复到会话开始时的窗口
       this.setState(PipelineState.TYPING)
+      if (this.sessionFocus) {
+        await restoreForegroundIfChanged(this.sessionFocus)
+      }
       await this.textOutput.output(finalText)
 
       this.emit('result', { raw: rawText, cleaned: finalText })

@@ -39,10 +39,29 @@ export class LLMProcessor {
 
   /**
    * Streaming LLM processing - calls onPartial for each chunk, returns full text.
+   * 失败自动重试一次（接口偶发挂起很常见），两次都失败才抛给上层降级。
    */
   async processStream(
     rawText: string,
     onPartial: (partialText: string) => void
+  ): Promise<string> {
+    let lastErr: unknown = null
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        return await this.processStreamOnce(rawText, onPartial, attempt)
+      } catch (err) {
+        lastErr = err
+        const msg = err instanceof Error ? err.message : String(err)
+        console.warn(`[LLM] 第 ${attempt} 次尝试失败: ${msg}`)
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
+  }
+
+  private async processStreamOnce(
+    rawText: string,
+    onPartial: (partialText: string) => void,
+    attempt: number
   ): Promise<string> {
     const config = getSetting('llm')
     const url = `${config.baseUrl}/chat/completions`
@@ -58,67 +77,87 @@ export class LLMProcessor {
       max_tokens: 4000,
     }
 
-    console.log(`[LLM] 流式处理 (${rawText.length}字): "${rawText.slice(0, 80)}..."`)
+    // 双重超时：12 秒内没有任何输出即快速失败重试（接口挂起场景）；
+    // 总限时 40 秒兜底（正常长文本流式生成不会触发）
+    const controller = new AbortController()
+    let firstTokenSeen = false
+    const firstTokenTimer = setTimeout(() => {
+      if (!firstTokenSeen) controller.abort(new DOMException('等待首个响应超时 (12s)', 'TimeoutError'))
+    }, 12000)
+    const overallTimer = setTimeout(() => {
+      controller.abort(new DOMException('LLM 请求总超时 (40s)', 'TimeoutError'))
+    }, 40000)
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${config.apiKey}`,
-      },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(30000),
-    })
+    try {
+      console.log(`[LLM] 流式处理-第${attempt}次 (${rawText.length}字): "${rawText.slice(0, 80)}..."`)
 
-    if (!response.ok) {
-      const errorText = await response.text()
-      throw new Error(`LLM API 错误 (${response.status}): ${errorText}`)
-    }
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${config.apiKey}`,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      })
 
-    const reader = response.body!.getReader()
-    const decoder = new TextDecoder()
-    let fullText = ''
-    let buffer = ''
+      if (!response.ok) {
+        const errorText = await response.text()
+        throw new Error(`LLM API 错误 (${response.status}): ${errorText.slice(0, 200)}`)
+      }
 
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
+      const reader = response.body!.getReader()
+      const decoder = new TextDecoder()
+      let fullText = ''
+      let buffer = ''
 
-      buffer += decoder.decode(value, { stream: true })
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
 
-      // Parse SSE chunks
-      const lines = buffer.split('\n')
-      buffer = lines.pop() || ''  // Keep incomplete line
+        buffer += decoder.decode(value, { stream: true })
 
-      for (const line of lines) {
-        const trimmed = line.trim()
-        if (!trimmed || !trimmed.startsWith('data: ')) continue
-        const data = trimmed.slice(6)
-        if (data === '[DONE]') break
+        // Parse SSE chunks
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''  // Keep incomplete line
 
-        try {
-          const json = JSON.parse(data)
-          const delta = json.choices?.[0]?.delta?.content
-          if (delta) {
-            fullText += delta
-            onPartial(fullText)
+        for (const line of lines) {
+          const trimmed = line.trim()
+          if (!trimmed || !trimmed.startsWith('data: ')) continue
+          const data = trimmed.slice(6)
+          if (data === '[DONE]') break
+
+          try {
+            const json = JSON.parse(data)
+            const delta = json.choices?.[0]?.delta?.content
+            if (delta) {
+              if (!firstTokenSeen) {
+                firstTokenSeen = true
+                clearTimeout(firstTokenTimer)
+              }
+              fullText += delta
+              onPartial(fullText)
+            }
+          } catch {
+            // Skip malformed JSON
           }
-        } catch {
-          // Skip malformed JSON
         }
       }
+
+      const cleanedText = fullText.trim() || rawText
+
+      // Filter hallucinations
+      if (this.isHallucination(cleanedText, rawText, config.outputMode)) {
+        console.warn(`[LLM] 检测到幻觉/跑题输出，回退原始文本`)
+        return rawText
+      }
+
+      console.log(`[LLM] 流式结果: "${cleanedText.slice(0, 80)}"`)
+      return cleanedText
+    } finally {
+      clearTimeout(firstTokenTimer)
+      clearTimeout(overallTimer)
     }
-
-    const cleanedText = fullText.trim() || rawText
-
-    // Filter hallucinations
-    if (this.isHallucination(cleanedText, rawText, config.outputMode)) {
-      console.warn(`[LLM] 检测到幻觉/跑题输出，回退原始文本`)
-      return rawText
-    }
-
-    console.log(`[LLM] 流式结果: "${cleanedText.slice(0, 80)}"`)
-    return cleanedText
   }
 
   /**

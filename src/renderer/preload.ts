@@ -118,6 +118,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       callback()
     })
   },
+  onBubbleNotice: (callback: (message: string) => void) => {
+    ipcRenderer.on('bubble:notice', (_event, message: string) => {
+      callback(message)
+    })
+  },
   bubbleResize: (height: number) => {
     ipcRenderer.send('bubble:resize', height)
   },

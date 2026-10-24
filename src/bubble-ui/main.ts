@@ -24,6 +24,7 @@ interface BubbleAPI {
   onBubbleSegmentFinal: (callback: (text: string) => void) => void
   onBubbleFinalResult: (callback: (result: { raw: string; cleaned: string }) => void) => void
   onBubbleSessionEnd: (callback: () => void) => void
+  onBubbleNotice: (callback: (message: string) => void) => void
   bubbleResize: (height: number) => void
 }
 const api = (window as any).electronAPI as BubbleAPI
@@ -61,6 +62,7 @@ function resetPanel(): void {
   resultEl.textContent = ''
   resultEl.classList.remove('final')
   statusEl.textContent = ''
+  statusEl.classList.remove('warn')
   llmPhase = false
   panel.classList.add('visible')
   requestResize()
@@ -157,6 +159,14 @@ api.onBubbleFinalResult((result: { raw: string; cleaned: string }) => {
 // 会话结束但无有效内容
 api.onBubbleSessionEnd(() => {
   scheduleCollapse(1500)
+})
+
+// 状态提示（如 AI 整理降级警示）
+api.onBubbleNotice((message: string) => {
+  showPanel()
+  statusEl.textContent = message
+  statusEl.classList.add('warn')
+  requestResize()
 })
 
 // Click to toggle

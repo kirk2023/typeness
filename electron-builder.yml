@@ -23,6 +23,8 @@ extraResources:
     to: scripts/
     filter:
       - "sapi-recognize.ps1"
+      - "focus-record.ps1"
+      - "focus-restore.ps1"
 win:
   icon: resources/icon.ico
   signAndEditExecutable: false
