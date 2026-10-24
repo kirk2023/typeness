@@ -1,5 +1,7 @@
 # Typeness — 语音听写输入法
 
+> [简体中文](README.md) | [English](README.en.md)
+
 对着麦克风说一段话，AI 自动去除口语冗余、整理成通顺文字，直接输入到光标所在位置。基于本地语音识别（sherpa-onnx）+ 可配置的 LLM 文本整理，Windows 桌面端常驻使用。
 
 ## 功能特性
